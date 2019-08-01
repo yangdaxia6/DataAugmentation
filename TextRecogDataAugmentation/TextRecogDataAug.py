@@ -1,7 +1,7 @@
 # -*- coding=utf-8 -*-
 ##############################################################
 # 包括:
-#     1. hsv通道, 亮度等
+#     1. hsv通道,  饱和度, 色度, 亮度
 #     2. 改变对比度, 光照等
 #     3. 旋转角度
 #     4. 裁剪(随机裁剪某些上下左右四个方向)
@@ -275,10 +275,11 @@ class SwapChannels(object):
         return image
 
 class RandomRotate(object):
-    def __init__(self, rot=10, scale=1.0, prob=0.5):
+    def __init__(self, rot=10, scale=1.0, pad = (125, 125, 125), prob=0.2):
         self.rotate = rot
         self.scale = scale
         self.prob = prob
+        self.pad = pad
         assert self.rotate > 0.0
 
     def __call__(self, img):
@@ -311,11 +312,31 @@ class RandomRotate(object):
             rot_mat[0, 2] += rot_move[0]
             rot_mat[1, 2] += rot_move[1]
             # 仿射变换
-            rot_img = cv2.warpAffine(img, rot_mat, (int(math.ceil(nw)), int(math.ceil(nh))), flags=cv2.INTER_LANCZOS4)
+            rot_img = cv2.warpAffine(img, rot_mat, (int(math.ceil(nw)), int(math.ceil(nh))), flags=cv2.INTER_LANCZOS4, borderValue=self.pad)
 
             return rot_img
         else:
             return img
+
+class RandomAffine(object):
+    def __init__(self, w_scale = 0.07, h_scale = 0.07, pad = (125, 125, 125), prob=0.3):
+        self.w_scale = w_scale
+        self.h_scale = h_scale
+        self.pad = pad
+        self.prob = prob
+
+    def __call__(self, image):
+        if is_aug(self.prob):
+            h, w, c = image.shape
+            w_scale = random.uniform(0, self.w_scale)
+            h_scale = random.uniform(0, self.h_scale)
+            pts1 = np.float32([[0, 0], [w - 1, 0], [0, h - 1]])
+            pts2 = np.float32([[w * w_scale, h * h_scale], [w * (1 - w_scale), h * h_scale], [w * w_scale, h * (1- h_scale)]])
+
+            M = cv2.getAffineTransform(pts1, pts2)
+            image = cv2.warpAffine(image, M, (w, h), borderValue=self.pad)
+
+        return image
 
 class CutOut(object):#随机加黑斑
     def __init__(self, scale=0.5, n_holes=1, mask_value=125, prob = 0.5):
@@ -405,7 +426,7 @@ class AdjustJpgQuality(object):
             image = cv2.resize(image, (w, h))
         return image
 
-class PhotometricDistort(object):
+class PhotometricDistort(object):#亮度对比度, 饱和度, 色度
     def __init__(self, prob=0.5):
         self.pd = [
             RandomContrast(),    #对比度
@@ -428,14 +449,27 @@ class PhotometricDistort(object):
         im = distort(im)
         return im
 
+class RotateOrAffine(object):#旋转或者透视变换
+    def __init__(self, pad = (238, 103, 103)):
+        self.rand_rotate = RandomRotate(pad = pad)
+        self.rand_affine = RandomAffine(pad = pad)
+
+    def __call__(self, image):
+        if is_aug(0.5):
+            image = self.rand_rotate(image)
+        else:
+            image = self.rand_affine(image)
+        return image
+
 class Policy1(object):
     def __init__(self):
         self.augment = Compose([
             ConvertFromInts(),
+            RotateOrAffine(),
             PhotometricDistort(),
             AdjustJpgQuality(prob = 0.5),
             Gasuss_blur(prob = 0.2),
-            #RandomRotate(),
+            #RandomRotate(pad=(255, 0, 0)),
 
         ])
 
@@ -465,6 +499,7 @@ if __name__ == '__main__':
 
         #show_pic(img, coords)  # 原图
         aug1 = Policy1()
+        aff = RotateOrAffine()
 
 
         crop = RandomSampleCrop()
@@ -475,4 +510,5 @@ if __name__ == '__main__':
             auged_img= aug1(img)
             #auged_img= crop(im)
             #auged_img = qual(im)
+            #auged_img = aff(img)
             show_pic(auged_img, 'policy1/' + str(i)+path)  # 强化后的图
